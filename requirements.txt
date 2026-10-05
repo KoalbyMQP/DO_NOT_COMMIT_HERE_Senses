@@ -5,7 +5,7 @@ scipy>=1.10.0
 sounddevice
 pygame
 python-dotenv
-pyaudio
+#pyaudio
 matplotlib
 psutil
 
