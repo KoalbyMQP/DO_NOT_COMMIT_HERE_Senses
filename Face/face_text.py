@@ -8,7 +8,8 @@ from pygame.locals import *
 import os
 
 BLACK = (0, 0, 0)
-EVE_BLUE = (0, 200, 255)
+EVE_BLUE = (251,144,98)
+EYE_GRADIENT_START = (106,13,131)
 WHITE = (255, 255, 255)
 TRANSPARENT = (0, 0, 0, 0)
 
@@ -145,55 +146,63 @@ class FinleyFace:
             }
         }
 
-    def draw_ellipse(self, x, y, width, height, color, fill=True, rotation=0, cutout=None):
-        """Draw an ellipse with optional rotation and bottom cutout."""
-        width = max(1, int(width)); height = max(1, int(height))
-        target_surface = self.screen; blit_pos = (0, 0)
-        origin_offset_x = x - width // 2; origin_offset_y = y - height // 2
-        surface_for_rotation = None
+    def _gradient_surface(self, mask_surface, end_color=EVE_BLUE):
+        """Colorize a shape mask with a vertical blue gradient."""
+        width, height = mask_surface.get_size()
+        gradient_strip = pygame.Surface((1, 2), pygame.SRCALPHA)
+        gradient_strip.set_at((0, 0), (*EYE_GRADIENT_START, 255))
+        gradient_strip.set_at((0, 1), (*end_color, 255))
+        gradient_surface = pygame.transform.smoothscale(
+            gradient_strip, (width, height)
+        )
+        gradient_surface.blit(
+            mask_surface, (0, 0), special_flags=pygame.BLEND_RGBA_MULT
+        )
+        return gradient_surface
 
+    def _draw_gradient_mask(self, mask_surface, x, y, rotation=0, end_color=EVE_BLUE):
+        gradient_surface = self._gradient_surface(mask_surface, end_color)
         if rotation != 0:
-            padding = max(width, height) // 2 + 5
-            surf_size = (width + padding, height + padding)
-            surface_for_rotation = pygame.Surface(surf_size, pygame.SRCALPHA)
-            surface_for_rotation.fill(TRANSPARENT)
-            target_surface = surface_for_rotation
-            center_x_surf = surf_size[0] // 2; center_y_surf = surf_size[1] // 2
-            origin_offset_x = center_x_surf - width // 2
-            origin_offset_y = center_y_surf - height // 2
-            blit_pos = (x, y)
+            gradient_surface = pygame.transform.rotate(gradient_surface, rotation)
+        position = (
+            x - gradient_surface.get_width() // 2,
+            y - gradient_surface.get_height() // 2,
+        )
+        self.screen.blit(gradient_surface, position)
 
-        ellipse_rect = pygame.Rect(origin_offset_x, origin_offset_y, width, height)
-        pygame.draw.ellipse(target_surface, color, ellipse_rect, 0 if fill else 2)
+    def draw_ellipse(self, x, y, width, height, color, fill=True, rotation=0, cutout=None):
+        """Draw a gradient ellipse with optional rotation and bottom cutout."""
+        width = max(1, int(width)); height = max(1, int(height))
+        mask_surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        mask_surface.fill(TRANSPARENT)
+        pygame.draw.ellipse(
+            mask_surface,
+            WHITE,
+            pygame.Rect(0, 0, width, height),
+            0 if fill else 2,
+        )
 
-        if cutout and fill:
-            cutout_shape = cutout.get("shape", "rectangle")
-            cutout_color = TRANSPARENT if surface_for_rotation else BLACK
-            center_x_main = origin_offset_x + width // 2
-            center_y_main = origin_offset_y + height // 2
+        if cutout and fill and cutout.get("shape", "rectangle") == "rectangle":
+            cutout_width = max(1, int(width * cutout.get("width_factor", 1.0)))
+            cutout_y = int(height * cutout.get("y_pos_factor", 0.6))
+            cutout_rect = pygame.Rect(
+                (width - cutout_width) // 2,
+                cutout_y,
+                cutout_width,
+                max(1, height - cutout_y),
+            )
+            pygame.draw.rect(mask_surface, TRANSPARENT, cutout_rect)
 
-            if cutout_shape == "rectangle":
-                cutout_y_pos_factor = cutout.get("y_pos_factor", 0.6)
-                cutout_width_factor = cutout.get("width_factor", 1.0)
-                rect_w = max(1, int(width * cutout_width_factor))
-                rect_x = center_x_main - rect_w // 2
-                rect_y = origin_offset_y + height * cutout_y_pos_factor
-                rect_h = max(1, (origin_offset_y + height) - int(rect_y))
-                rect_h = min(rect_h, target_surface.get_height() - int(rect_y))
-
-                cutout_rect = pygame.Rect(rect_x, rect_y, rect_w, rect_h)
-                if cutout_rect.height > 0 and cutout_rect.width > 0:
-                     pygame.draw.rect(target_surface, cutout_color, cutout_rect, 0)
-
-
-        if surface_for_rotation:
-            rotated = pygame.transform.rotate(surface_for_rotation, rotation)
-            blit_x = blit_pos[0] - rotated.get_width() // 2
-            blit_y = blit_pos[1] - rotated.get_height() // 2
-            self.screen.blit(rotated, (blit_x, blit_y))
+        self._draw_gradient_mask(mask_surface, x, y, rotation, color)
 
     def draw_arc(self, x, y, width, height, start_angle, stop_angle, color, thickness=0, rotation=0):
         """Draw an arc. If thickness is 0, draw a filled segment."""
+        if thickness == 0:
+            self.draw_gradient_arc(
+                x, y, width, height, start_angle, stop_angle, rotation, color
+            )
+            return
+
         width = max(1, int(width)); height = max(1, int(height))
         start_rad = math.radians(start_angle); stop_rad = math.radians(stop_angle)
         if abs(stop_rad - start_rad) < 1e-6 or width <= 0 or height <= 0: return
@@ -247,6 +256,30 @@ class FinleyFace:
                      try: pygame.draw.polygon(target_surf, color, points)
                      except (ValueError, TypeError) as e: print(f"Error drawing arc polygon on screen: {e}, points count={len(points)}")
 
+
+    def draw_gradient_arc(
+        self, x, y, width, height, start_angle, stop_angle, rotation=0, color=EVE_BLUE
+    ):
+        """Draw a gradient-filled arc segment."""
+        width = max(1, int(width)); height = max(1, int(height))
+        start_rad = math.radians(start_angle); stop_rad = math.radians(stop_angle)
+        if abs(stop_rad - start_rad) < 1e-6:
+            return
+
+        mask_surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        mask_surface.fill(TRANSPARENT)
+        center_x = width // 2
+        center_y = height // 2
+        points = []
+        num_points = max(2, int(abs(stop_angle - start_angle) / 5))
+        for i in range(num_points + 1):
+            angle = start_rad + (stop_rad - start_rad) * i / num_points
+            point_x = center_x + math.cos(angle) * width / 2
+            point_y = center_y - math.sin(angle) * height / 2
+            points.append((point_x, point_y))
+        points.append((center_x, center_y))
+        pygame.draw.polygon(mask_surface, WHITE, points)
+        self._draw_gradient_mask(mask_surface, x, y, rotation, color)
 
     def blend_emotions(self, emotion1, emotion2, factor):
         """Blend between two emotions based on transition factor (0.0 to 1.0)"""
@@ -373,7 +406,7 @@ class FinleyFace:
         elif shape == "arc" or shape == "angry":
             start = eye_props.get("start_angle", 180)
             stop = eye_props.get("stop_angle", 360)
-            self.draw_arc(draw_x, draw_y, width, height, start, stop, EVE_BLUE, 0, tilt_rotation)
+            self.draw_gradient_arc(draw_x, draw_y, width, height, start, stop, tilt_rotation)
 
         elif shape == "special":
             self.draw_ellipse(draw_x, draw_y, width, height, EVE_BLUE, True, tilt_rotation, cutout=cutout_params)
@@ -461,7 +494,8 @@ class FinleyFace:
         text_y = y + gaze_offset_y
 
         face_text = pygame.font.Font(None, 500)
-        text_surf = face_text.render(text, True, EVE_BLUE)
+        text_mask = face_text.render(text, True, WHITE)
+        text_surf = self._gradient_surface(text_mask)
         width = text_surf.get_width()
         height = text_surf.get_height()
         text_rect = text_surf.get_rect(center=(text_x, text_y))
@@ -475,8 +509,8 @@ class FinleyFace:
         self.draw_eye(self.LEFT_EYE_X, self.EYE_Y, is_left=True)
         self.draw_eye(self.RIGHT_EYE_X, self.EYE_Y, is_left=False)
 
-        self.draw_eye_text(">", self.LEFT_EYE_X - (self.EYE_WIDTH ), self.EYE_Y, True)
-        self.draw_eye_text("<", self.RIGHT_EYE_X + (self.EYE_WIDTH), self.EYE_Y, False)
+        self.draw_eye_text(">", self.LEFT_EYE_X / 2, self.EYE_Y, True)
+        self.draw_eye_text("<", (self.RIGHT_EYE_X + self.WIDTH)/2, self.EYE_Y, False)
 
         self.draw_eye_text("^", self.LEFT_EYE_X, self.EYE_Y/2, True)
         self.draw_eye_text("^", self.RIGHT_EYE_X, self.EYE_Y/2, False)
